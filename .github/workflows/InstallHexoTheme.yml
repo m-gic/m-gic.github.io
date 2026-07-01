@@ -1,0 +1,90 @@
+name: Install Hexo Theme
+
+# 手动触发，触发时填入主题的 npm 包名
+# 例如: hexo-theme-butterfly / hexo-theme-shoka / hexo-theme-next
+on:
+  workflow_dispatch:
+    inputs:
+      theme_package:
+        description: "主题的 npm 包名 (例如 hexo-theme-butterfly)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  install-theme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install existing dependencies
+        run: npm install
+
+      - name: Remove old theme (自动判断)
+        run: |
+          # 读取当前 _config.yml 里的 theme 字段，得到旧主题短名
+          OLD_THEME_NAME=$(grep "^theme:" _config.yml | sed 's/^theme:[[:space:]]*//' | tr -d '\r')
+          NEW_THEME_NAME="${{ inputs.theme_package }}"
+          NEW_THEME_NAME="${NEW_THEME_NAME#hexo-theme-}"
+
+          if [ -z "$OLD_THEME_NAME" ] || [ "$OLD_THEME_NAME" = "$NEW_THEME_NAME" ]; then
+            echo "没有需要卸载的旧主题，跳过"
+          else
+            OLD_THEME_PACKAGE="hexo-theme-${OLD_THEME_NAME}"
+            echo "卸载旧主题: $OLD_THEME_PACKAGE"
+
+            # 如果该包确实在 package.json 依赖里，才执行卸载
+            if grep -q "\"${OLD_THEME_PACKAGE}\"" package.json; then
+              npm uninstall "$OLD_THEME_PACKAGE"
+            else
+              echo "package.json 中未找到 $OLD_THEME_PACKAGE，跳过 npm uninstall"
+            fi
+
+            # 删除旧主题的独立配置文件
+            OLD_THEME_CONFIG_FILE="_config.${OLD_THEME_NAME}.yml"
+            if [ -f "$OLD_THEME_CONFIG_FILE" ]; then
+              rm -f "$OLD_THEME_CONFIG_FILE"
+              echo "已删除 $OLD_THEME_CONFIG_FILE"
+            fi
+          fi
+
+      - name: Install theme package (始终拉取最新版本)
+        run: npm install ${{ inputs.theme_package }}@latest --save
+
+      - name: Apply theme in _config.yml
+        run: |
+          # 从包名里去掉 "hexo-theme-" 前缀，得到写进配置文件的主题名
+          THEME_NAME="${{ inputs.theme_package }}"
+          THEME_NAME="${THEME_NAME#hexo-theme-}"
+          echo "应用主题: $THEME_NAME"
+
+          if grep -q "^theme:" _config.yml; then
+            sed -i "s/^theme:.*/theme: $THEME_NAME/" _config.yml
+          else
+            echo "theme: $THEME_NAME" >> _config.yml
+          fi
+
+          # 生成主题独立配置文件 _config.<主题名>.yml（如果还不存在的话）
+          # 内容拷贝自 node_modules 里主题自带的默认配置
+          THEME_CONFIG_FILE="_config.${THEME_NAME}.yml"
+          THEME_DEFAULT_CONFIG="node_modules/${{ inputs.theme_package }}/_config.yml"
+          if [ ! -f "$THEME_CONFIG_FILE" ] && [ -f "$THEME_DEFAULT_CONFIG" ]; then
+            cp "$THEME_DEFAULT_CONFIG" "$THEME_CONFIG_FILE"
+            echo "已生成 $THEME_CONFIG_FILE，后续主题相关设置（导航栏、头像、颜色等）请编辑这个文件"
+          fi
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "chore: install and apply theme ${{ inputs.theme_package }}"
+          git push

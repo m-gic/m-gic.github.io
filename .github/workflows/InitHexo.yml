@@ -1,0 +1,44 @@
+name: Init Hexo Blog
+
+# 手动触发：在 Actions 页面点 "Run workflow" 即可
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Hexo CLI
+        run: npm install -g hexo-cli
+
+      - name: Init Hexo site (跳过已初始化的情况)
+        run: |
+          if [ ! -f package.json ]; then
+            # hexo init 要求目标目录必须为空，而仓库里已有 .github 等文件，
+            # 所以先在临时目录里初始化，再把生成的文件合并拷贝进仓库根目录
+            hexo init .hexo-tmp
+            rsync -a .hexo-tmp/ ./ --exclude='.git'
+            rm -rf .hexo-tmp
+            npm install
+          else
+            echo "已存在 package.json，跳过初始化。"
+          fi
+
+      - name: Commit and push scaffold
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "chore: init hexo blog"
+          git push
